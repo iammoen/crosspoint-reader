@@ -10,6 +10,8 @@
 #include <JsonSettingsIO.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <esp_app_desc.h>
+#include <esp_ota_ops.h>
 #include <esp_system.h>
 
 #include <algorithm>
@@ -32,6 +34,7 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "activities/settings/BootAlternateFirmwareActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
@@ -243,9 +246,15 @@ void EpubReaderActivity::openReaderMenu() {
     bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
   }
   const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
+  // Only surface the switch option when the inactive OTA partition holds a valid app image.
+  const esp_partition_t* alternatePartition = esp_ota_get_next_update_partition(nullptr);
+  esp_app_desc_t alternateDesc = {};
+  const bool hasAlternateFirmware =
+      alternatePartition && esp_ota_get_partition_description(alternatePartition, &alternateDesc) == ESP_OK;
   startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                              renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
-                             SETTINGS.orientation, !currentPageFootnotes.empty(), !cachedBookmarks.empty()),
+                             SETTINGS.orientation, !currentPageFootnotes.empty(), !cachedBookmarks.empty(),
+                             hasAlternateFirmware),
                          [this](const ActivityResult& result) {
                            // Always apply orientation change even if the menu was cancelled
                            const auto& menu = std::get<MenuResult>(result.data);
@@ -770,6 +779,11 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
     case EpubReaderMenuActivity::MenuAction::TOGGLE_BOOKMARK: {
       addBookmark();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::SWITCH_FIRMWARE: {
+      startActivityForResult(std::make_unique<BootAlternateFirmwareActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) { requestUpdate(); });
       break;
     }
   }
